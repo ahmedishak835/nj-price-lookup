@@ -9,7 +9,6 @@ st.set_page_config(page_title="NJ Cost & Price Finder", layout="wide")
 # 2. Cached Data Loader for Excel
 @st.cache_data
 def load_clean_excel(file_path):
-    # Reads the Excel file directly using openpyxl engine
     df = pd.read_excel(file_path)
     return df
 
@@ -46,7 +45,7 @@ if not os.path.exists(TARGET_FILE):
     st.info("👉 **How to fix this:** Upload your `Cleaned_NJ_AI_Pricing.xlsx` file directly to the root of your GitHub repository. Make sure the filename matches exactly (case-sensitive).")
 else:
     try:
-        # Load the pre-cleaned data
+        # Load the pre-cleaned data cleanly
         df_clean = load_clean_excel(TARGET_FILE)
         
         # Search Box
