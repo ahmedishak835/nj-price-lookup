@@ -3,43 +3,17 @@ import re
 import pandas as pd
 import streamlit as st
 
-# 1. Page Configuration (Must be the very first Streamlit command)
+# 1. Page Configuration
 st.set_page_config(page_title="NJ Cost & Price Finder", layout="wide")
 
-# 2. Pure Data Cache (CRITICAL: No 'st.' UI elements allowed inside here!)
+# 2. Cached Data Loader for Excel
 @st.cache_data
-def load_and_clean_data(file_path):
-    df = pd.read_csv(file_path, header=1)
-    
-    # Reconstruct messy column tiers
-    new_cols = []
-    for i, col in enumerate(df.columns):
-        if 11 <= i <= 19:
-            base = col.replace('.1', '').replace('.2', '')
-            new_cols.append(f'Supplier Cost ({base})')
-        elif 20 <= i <= 28:
-            base = col.replace('.1', '').replace('.2', '')
-            if base == '100-149': base = '100-249'  # Correct structural typo
-            new_cols.append(f'Client Price ({base})')
-        elif 29 <= i <= 37:
-            base = col.replace('.1', '').replace('.2', '')
-            if base == '0-99': base = '50-99'        # Correct structural typo
-            new_cols.append(f'Margin ({base})')
-        else:
-            new_cols.append(col)
-            
-    df.columns = new_cols
-
-    # Strip currency strings and format floats
-    for col in df.columns:
-        if any(keyword in col for keyword in ['Cost', 'Price', 'Margin']) or col in ['DELIVERY', 'Sample Fee']:
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.replace('£', '', regex=False).str.replace(',', '', regex=False)
-                df[col] = df[col].replace({'TBC': pd.NA, 'nan': pd.NA, 'NaN': pd.NA})
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+def load_clean_excel(file_path):
+    # Reads the Excel file directly using openpyxl engine
+    df = pd.read_excel(file_path)
     return df
 
-# Helper functions for the search engine
+# Helper functions for query parsing
 def parse_search_query(query):
     numbers = re.findall(r'\d+', query)
     quantity = int(numbers[0]) if numbers else None
@@ -63,31 +37,32 @@ def get_tier_bracket(qty):
 st.title("🎯 NJ Internal Product & Cost Finder")
 st.write("Type a product keyword and a target quantity to pull real-time supplier costs (e.g., `beanie 250`).")
 
-TARGET_FILE = "NJ AI Pricingcsv.csv"
+# Expected filename
+TARGET_FILE = "Cleaned_NJ_AI_Pricing.xlsx"
 
-# Check if the file exists BEFORE running any cached data operations
+# Check if the file exists on GitHub before loading
 if not os.path.exists(TARGET_FILE):
-    st.error(f"⚠️ **Data File Missing:** Could not find `{TARGET_FILE}` in your GitHub repository folder.")
-    st.info("👉 **How to fix this:** Go to your GitHub repository, click 'Add file' -> 'Upload files', and upload the original `NJ AI Pricingcsv.csv` dataset. Once uploaded, this app will start working instantly!")
+    st.error(f"⚠️ **Excel File Missing:** Could not find `{TARGET_FILE}` in your GitHub repository.")
+    st.info("👉 **How to fix this:** Upload your `Cleaned_NJ_AI_Pricing.xlsx` file directly to the root of your GitHub repository. Make sure the filename matches exactly (case-sensitive).")
 else:
     try:
-        # Load compiled dataset safely
-        df_clean = load_and_load_data = load_and_clean_data(TARGET_FILE)
+        # Load the pre-cleaned data
+        df_clean = load_clean_excel(TARGET_FILE)
         
-        # Main Search Input
+        # Search Box
         user_input = st.text_input("Search Engine", value="beanie 250", placeholder="e.g., socks 500, hoodie 1500")
 
         if user_input:
             search_term, target_qty = parse_search_query(user_input)
             tier = get_tier_bracket(target_qty)
 
-            # Filter data based on search
+            # Filter rows where Product Type or Description matches the keyword
             results = df_clean[
                 df_clean['PRODUCT TYPE'].str.contains(search_term, case=False, na=False) |
                 df_clean['PRODUCT DESCRIPTION'].str.contains(search_term, case=False, na=False)
             ].copy()
 
-            # Stats Cards
+            # Dynamic Metrics Display
             col1, col2, col3 = st.columns(3)
             col1.metric("Parsed Product Keyword", f'"{search_term}"' if search_term else "All")
             col2.metric("Parsed Quantity Requested", f"{target_qty:,}" if target_qty else "None specified")
@@ -96,22 +71,26 @@ else:
             st.write("---")
 
             if not results.empty:
+                # If a valid quantity tier matches, show specific pricing metrics
                 if tier and tier != "Under MOQ":
                     cost_col = f'Supplier Cost ({tier})'
                     price_col = f'Client Price ({tier})'
                     margin_col = f'Margin ({tier})'
                     
+                    # Group relevant columns for presentation
                     display_cols = [
                         'PRODUCT TYPE', 'PRODUCT DESCRIPTION', 'SUPPLIER', 'MOQ', 
                         cost_col, price_col, margin_col, 'DELIVERY', 'Bulk Lead Time'
                     ]
+                    # Filter out any missing metadata columns dynamically
                     display_cols = [c for c in display_cols if c in results.columns]
                     
                     final_view = results[display_cols].copy()
                     
+                    # Clean look currency formatting
                     for c in [cost_col, price_col, margin_col, 'DELIVERY']:
                         if c in final_view.columns:
-                            final_view[c] = final_view[c].apply(lambda x: f"£{x:,.2f}" if pd.notna(x) else "TBC")
+                            final_view[c] = final_view[c].apply(lambda x: f"£{x:,.2f}" if pd.notna(x) and isinstance(x, (int, float)) else f"£{x}" if pd.notna(x) else "TBC")
                     
                     st.subheader(f"Matching results for quantity tier: {tier}")
                     st.dataframe(final_view, use_container_width=True)
@@ -124,4 +103,4 @@ else:
                 st.info("No matching products found. Try updating your spelling or search terms.")
                 
     except Exception as e:
-        st.error(f"An unexpected error occurred while processing the file: {e}")
+        st.error(f"An unexpected error occurred while parsing the Excel file: {e}")
